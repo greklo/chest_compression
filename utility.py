@@ -15,6 +15,11 @@ from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_sc
 
 from scipy import stats
 
+import matplotlib.pyplot as plt
+
+
+color_cols = ["#d9327f", "#4fabc9", "#2a428a"]
+
 def model_stats(
     y_train, train_prob, y_test, test_prob, test_pred, json_path=None, label = 'is_compression',
     ) -> pd.DataFrame:
@@ -138,3 +143,110 @@ def lift_table(df, target, score, number_bins=10, duplicates="raise") -> pd.Data
     lift_table["Lift"] = cum_pct_positive / (lift_table["Decile"] * (100 / number_bins))
 
     return lift_table.drop("min_score", axis=1)
+
+
+def make_ks_plot(
+    y_train: pd.Series,
+    train_proba: np.ndarray,
+    y_test: pd.Series,
+    test_proba: np.ndarray,
+    bins=30,
+    fig_sz=(10, 8),
+    label = "label",
+):
+    """
+    Creates  KS test/train overtraining plots for classifier output.
+    
+    Parameters:
+    ------------
+    `y_train`: Predicted probabilities from the training dataset.
+    `train_proba`: np.ndarray from sklearn predict_praba(). Same shape as y_train. 0-1 probabilities from model.
+    `y_test`: Series with outputs of model from the test dataset.
+    `test_proba`: np.ndarray from sklearn predict_praba(). Same shape as y_test. 0-1 probabilities from model.
+    `bins`: number of bins for visualization. Default is 30.
+    `label_col_name`: name of y-label. Change to whatever your model has it named. Default 'label'.
+    `fig_sz`: change to True in order to get larger outputs. Default False.
+    
+    Returns:
+    ------------
+    The KS test/train overtraining plots for classifier output.
+    """
+
+    train = pd.DataFrame(y_train, columns=[label])
+    test = pd.DataFrame(y_test, columns=[label])
+    train["probability"] = train_proba
+    test["probability"] = test_proba
+
+    decisions = []
+    for df in [train, test]:
+        d1 = df["probability"][df[label] == 1]
+        d2 = df["probability"][df[label] == 0]
+        decisions += [d1, d2]
+
+    low = min(np.min(d) for d in decisions)
+    high = max(np.max(d) for d in decisions)
+    low_high = (low, high)
+
+    with plt.style.context(("seaborn-whitegrid")):
+        fig = plt.figure(figsize=fig_sz)
+
+        train_pos = plt.hist(
+            decisions[0],
+            color=color_cols[1],
+            alpha=0.5,
+            range=low_high,
+            bins=bins,
+            histtype="stepfilled",
+            density=True,
+            label="+ (train)",
+        )
+
+        train_neg = plt.hist(
+            decisions[1],
+            color=color_cols[0],
+            alpha=0.5,
+            range=low_high,
+            bins=bins,
+            histtype="stepfilled",
+            density=True,
+            label="- (train)",
+        )
+
+        hist, bins = np.histogram(decisions[2], bins=bins, range=low_high, density=True)
+        scale = len(decisions[2]) / sum(hist)
+        err = np.sqrt(hist * scale) / scale
+
+        width = bins[1] - bins[0]
+        center = (bins[:-1] + bins[1:]) / 2
+        test_pos = plt.errorbar(
+            center, hist, yerr=err, fmt="o", c=color_cols[1], label="+ (test)"
+        )
+
+        hist, bins = np.histogram(decisions[3], bins=bins, range=low_high, density=True)
+        scale = len(decisions[2]) / sum(hist)
+        err = np.sqrt(hist * scale) / scale
+
+        test_neg = plt.errorbar(
+            center, hist, yerr=err, fmt="o", c=color_cols[0], label="- (test)"
+        )
+
+        # get the KS score
+        ks = stats.ks_2samp(decisions[0], decisions[2])
+
+        plt.xlabel("Classifier Output", fontsize=12)
+        plt.ylabel("Arbitrary Normalized Units", fontsize=12)
+
+        plt.xlim(0, 1)
+        plt.plot(
+            [],
+            [],
+            " ",
+            label="KS Statistic (p-value) :"
+            + str(round(ks[0], 2))
+            + "("
+            + str(round(ks[1], 2))
+            + ")",
+        )
+        plt.legend(loc="best", fontsize=12)
+        plt.show()
+        plt.close()
